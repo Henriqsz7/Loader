@@ -341,7 +341,7 @@ local function performSmartDodge(styleKey, enemyRoot)
     local character = LocalPlayer.Character
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
     local myRoot = character and character:FindFirstChild("HumanoidRootPart")
-    if not character or not humanoid or not myRoot or not enemyRoot or not canAct(character) or character:GetAttribute("Equip") ~= true or (not State.autoDash and not State.npcDash) or not isFacingTarget(myRoot, enemyRoot, 0.25) then return end
+    if not character or not humanoid or not myRoot or not enemyRoot or not canAct(character) or character:GetAttribute("Equip") ~= true or (not State.autoDash and not State.npcDash) then return end
 
     if character:GetAttribute("Blocking") == true then
         pcall(Block.Unblock)
@@ -404,7 +404,7 @@ end
 local function triggerDodge(styleKey, enemyRoot, delaySeconds)
     local myChar = LocalPlayer.Character
     local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
-    if not myRoot or not enemyRoot or not enemyRoot.Parent or not canAct(myChar) or myChar:GetAttribute("Equip") ~= true or (not State.autoDash and not State.npcDash) or not isFacingTarget(myRoot, enemyRoot, 0.25) then return end
+    if not myRoot or not enemyRoot or not enemyRoot.Parent or not canAct(myChar) or myChar:GetAttribute("Equip") ~= true or (not State.autoDash and not State.npcDash) then return end
 
     local initialDist = (Vector3.new(myRoot.Position.X, 0, myRoot.Position.Z) - Vector3.new(enemyRoot.Position.X, 0, enemyRoot.Position.Z)).Magnitude
     if initialDist > State.parryDistance then return end
@@ -414,7 +414,7 @@ local function triggerDodge(styleKey, enemyRoot, delaySeconds)
             if State.unloading or (not State.autoDash and not State.npcDash) then return end
             myChar = LocalPlayer.Character
             myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
-            if myRoot and enemyRoot and enemyRoot.Parent and canAct(myChar) and myChar:GetAttribute("Equip") == true and isFacingTarget(myRoot, enemyRoot, 0.25) then
+            if myRoot and enemyRoot and enemyRoot.Parent and canAct(myChar) and myChar:GetAttribute("Equip") == true then
                 local currentDist = (Vector3.new(myRoot.Position.X, 0, myRoot.Position.Z) - Vector3.new(enemyRoot.Position.X, 0, enemyRoot.Position.Z)).Magnitude
                 if currentDist <= State.parryDistance then
                     performSmartDodge(styleKey, enemyRoot)
@@ -460,6 +460,15 @@ local function applyParryPulse(holdTime)
         ensureEquipped()
     end
 
+    character:SetAttribute("BlockCooldown", nil)
+    character:SetAttribute("ParryWindowDisabled", nil)
+    character:SetAttribute("ParryBuffered", true)
+
+    local setupVal = debug and debug.setupvalue or setupvalue
+    if typeof(setupVal) == "function" then
+        pcall(setupVal, Block.Block, 6, 0)
+    end
+
     State.pulse = State.pulse + 1
     local thisPulse = State.pulse
 
@@ -470,19 +479,26 @@ local function applyParryPulse(holdTime)
 
     task.delay(holdTime or 0.22, function()
         if State.unloading then return end
-        if thisPulse == State.pulse and character == LocalPlayer.Character and character:GetAttribute("Blocking") == true then
-            pcall(Block.Unblock)
+        if thisPulse == State.pulse and character == LocalPlayer.Character then
+            if character:GetAttribute("Blocking") == true then
+                pcall(Block.Unblock)
+            end
+            character:SetAttribute("ParryBuffered", nil)
         end
     end)
 end
 
 local function isAttackerFacingMe(enemyRoot, myRoot)
     local toMe = Vector3.new(myRoot.Position.X - enemyRoot.Position.X, 0, myRoot.Position.Z - enemyRoot.Position.Z)
-    local enemyLook = Vector3.new(enemyRoot.CFrame.LookVector.X, 0, enemyRoot.CFrame.LookVector.Z)
+    local dist = toMe.Magnitude
+    if dist <= 14 then
+        return true
+    end
 
-    if toMe.Magnitude > 0.1 and enemyLook.Magnitude > 0.1 then
+    local enemyLook = Vector3.new(enemyRoot.CFrame.LookVector.X, 0, enemyRoot.CFrame.LookVector.Z)
+    if dist > 0.1 and enemyLook.Magnitude > 0.1 then
         local dot = toMe.Unit:Dot(enemyLook.Unit)
-        if dot < 0.25 then
+        if dot < -0.15 then
             return false
         end
     end
@@ -677,7 +693,22 @@ local function onEnemyAnimation(player, character, track)
     local canParry = (isNpc and State.npcParry) or (not isNpc and State.autoParry)
     if not canDash and not canParry then return end
 
-    local isLight = not isHeavy and (attackData ~= nil or lowerName:find("m1", 1, true) ~= nil or lowerName:match("^(%d)") ~= nil or lowerName:find("attack", 1, true) ~= nil or lowerName:find("punch", 1, true) ~= nil or lowerName:find("kick", 1, true) ~= nil or isNpc)
+    local isLight = not isHeavy and (attackData ~= nil
+        or lowerName:find("m1", 1, true) ~= nil
+        or lowerName:match("^(%d)") ~= nil
+        or lowerName:find("attack", 1, true) ~= nil
+        or lowerName:find("punch", 1, true) ~= nil
+        or lowerName:find("kick", 1, true) ~= nil
+        or lowerName:find("strike", 1, true) ~= nil
+        or lowerName:find("swing", 1, true) ~= nil
+        or lowerName:find("combo", 1, true) ~= nil
+        or lowerName:find("jab", 1, true) ~= nil
+        or lowerName:find("hook", 1, true) ~= nil
+        or lowerName:find("fist", 1, true) ~= nil
+        or lowerName:find("rush", 1, true) ~= nil
+        or lowerName:find("hit", 1, true) ~= nil
+        or lowerName:find("slash", 1, true) ~= nil
+        or isNpc)
 
     if not isHeavy and not isLight then return end
 
@@ -693,7 +724,7 @@ local function onEnemyAnimation(player, character, track)
         return
     end
 
-    if not isNpc and not canDash and not State.autoFace and not isFacingTarget(myRoot, enemyRoot, 0.25) then
+    if not isNpc and not canDash and not State.autoFace and dist > 14 and not isFacingTarget(myRoot, enemyRoot, -0.2) then
         return
     end
 
@@ -780,9 +811,10 @@ local function onEnemyAnimation(player, character, track)
     local pulseHold = isHeavy and 0.32 or 0.22
 
     if parryDelay <= 0.03 then
-        if isNpc or (isFacingTarget(myRoot, enemyRoot, 0.25) and isAttackerFacingMe(enemyRoot, myRoot)) then
-            applyParryPulse(pulseHold)
+        if State.autoFace and not isNpc then
+            faceTarget(enemyRoot, 0.3)
         end
+        applyParryPulse(pulseHold)
     else
         task.delay(parryDelay, function()
             local canParryDelayed = (isNpc and State.npcParry) or (not isNpc and State.autoParry)
@@ -792,7 +824,7 @@ local function onEnemyAnimation(player, character, track)
             enemyRoot = character and character:FindFirstChild("HumanoidRootPart")
             if myRoot and enemyRoot then
                 local currentDist = (Vector3.new(myRoot.Position.X, 0, myRoot.Position.Z) - Vector3.new(enemyRoot.Position.X, 0, enemyRoot.Position.Z)).Magnitude
-                if currentDist <= State.parryDistance and (isNpc or (isFacingTarget(myRoot, enemyRoot, 0.25) and isAttackerFacingMe(enemyRoot, myRoot))) then
+                if currentDist <= State.parryDistance then
                     if State.autoFace then
                         faceTarget(enemyRoot, 0.3)
                     end
