@@ -404,19 +404,29 @@ end
 local function triggerDodge(styleKey, enemyRoot, delaySeconds)
     local myChar = LocalPlayer.Character
     local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
-    if not myRoot or not enemyRoot or not enemyRoot.Parent or not canAct(myChar) or myChar:GetAttribute("Equip") ~= true or (not State.autoDash and not State.npcDash) then return end
+    if not myRoot or not enemyRoot or not enemyRoot.Parent or not canAct(myChar) or myChar:GetAttribute("Equip") ~= true then return end
+
+    local enemyChar = enemyRoot.Parent
+    local isNpcTarget = (Players:GetPlayerFromCharacter(enemyChar) == nil)
+    local allowedDash = isNpcTarget and State.npcDash or State.autoDash
+    if not allowedDash then return end
 
     local initialDist = (Vector3.new(myRoot.Position.X, 0, myRoot.Position.Z) - Vector3.new(enemyRoot.Position.X, 0, enemyRoot.Position.Z)).Magnitude
-    if initialDist > State.parryDistance then return end
+    if initialDist > 12 then return end
+
+    if not isAttackerFacingMe(enemyRoot, myRoot, 0.45) then return end
 
     if delaySeconds and delaySeconds > 0.03 then
         task.delay(delaySeconds, function()
-            if State.unloading or (not State.autoDash and not State.npcDash) then return end
+            if State.unloading then return end
+            local curAllowed = isNpcTarget and State.npcDash or State.autoDash
+            if not curAllowed then return end
+
             myChar = LocalPlayer.Character
             myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
             if myRoot and enemyRoot and enemyRoot.Parent and canAct(myChar) and myChar:GetAttribute("Equip") == true then
                 local currentDist = (Vector3.new(myRoot.Position.X, 0, myRoot.Position.Z) - Vector3.new(enemyRoot.Position.X, 0, enemyRoot.Position.Z)).Magnitude
-                if currentDist <= State.parryDistance then
+                if currentDist <= 12 and isAttackerFacingMe(enemyRoot, myRoot, 0.40) then
                     performSmartDodge(styleKey, enemyRoot)
                 end
             end
@@ -488,22 +498,20 @@ local function applyParryPulse(holdTime)
     end)
 end
 
-local function isAttackerFacingMe(enemyRoot, myRoot)
+local function isAttackerFacingMe(enemyRoot, myRoot, minDot)
     local toMe = Vector3.new(myRoot.Position.X - enemyRoot.Position.X, 0, myRoot.Position.Z - enemyRoot.Position.Z)
     local dist = toMe.Magnitude
-    if dist <= 14 then
+    if dist < 0.1 then
         return true
     end
 
     local enemyLook = Vector3.new(enemyRoot.CFrame.LookVector.X, 0, enemyRoot.CFrame.LookVector.Z)
-    if dist > 0.1 and enemyLook.Magnitude > 0.1 then
-        local dot = toMe.Unit:Dot(enemyLook.Unit)
-        if dot < -0.15 then
-            return false
-        end
+    if enemyLook.Magnitude < 0.1 then
+        return true
     end
 
-    return true
+    local dot = toMe.Unit:Dot(enemyLook.Unit)
+    return dot >= (minDot or 0.35)
 end
 
 local function getOrCreatePlayerInfoGui(character)
@@ -688,7 +696,8 @@ local function onEnemyAnimation(player, character, track)
         or lowerName:match("^r_") ~= nil
         or lowerName:match("_r$") ~= nil
 
-    local isNpc = (player == nil)
+    local realPlayer = player or Players:GetPlayerFromCharacter(character)
+    local isNpc = (realPlayer == nil)
     local canDash = (isNpc and State.npcDash) or (not isNpc and State.autoDash)
     local canParry = (isNpc and State.npcParry) or (not isNpc and State.autoParry)
     if not canDash and not canParry then return end
@@ -720,7 +729,7 @@ local function onEnemyAnimation(player, character, track)
     local dist = (Vector3.new(myRoot.Position.X, 0, myRoot.Position.Z) - Vector3.new(enemyRoot.Position.X, 0, enemyRoot.Position.Z)).Magnitude
     if dist > State.parryDistance then return end
 
-    if not isNpc and not isAttackerFacingMe(enemyRoot, myRoot) then
+    if not isNpc and not isAttackerFacingMe(enemyRoot, myRoot, 0.25) then
         return
     end
 
@@ -741,34 +750,49 @@ local function onEnemyAnimation(player, character, track)
 
     if isHeavy then
         recordM2Cooldown(character, style)
-        local hitboxDelay = attackData and attackData.fallbackDelay
-        if not hitboxDelay or typeof(hitboxDelay) ~= "number" then
-            pcall(function()
-                hitboxDelay = CombatConfig.GetStyleM2HitboxDelay(style)
-            end)
-        end
-        hitboxDelay = hitboxDelay or 0.38
-        local trackSpeed = math.max(math.abs(track.Speed), 0.05)
-        local effectiveHitbox = (hitboxDelay / trackSpeed)
-        local pingLead = (isNpc and 0) or (State.pingComp and (getLivePing() * 0.5) or 0)
-        local dodgeDelay = math.max(0, effectiveHitbox - 0.22 - pingLead)
 
         local isStyleAllowed = (State.styleToggles[styleKey] == true)
         local canDashStyle = canDash and isStyleAllowed
 
-        if styleKey == "boxing" then
-            if State.boxingHold then
-                handleBoxingHold(character, track)
-                return
-            elseif canDashStyle then
-                triggerDodge("boxing", enemyRoot, dodgeDelay)
+        if dist <= 12 and (isNpc or isAttackerFacingMe(enemyRoot, myRoot, 0.45)) then
+            if styleKey == "boxing" then
+                if State.boxingHold then
+                    handleBoxingHold(character, track)
+                    return
+                elseif canDashStyle then
+                    local hitboxDelay = attackData and attackData.fallbackDelay
+                    if not hitboxDelay or typeof(hitboxDelay) ~= "number" then
+                        pcall(function()
+                            hitboxDelay = CombatConfig.GetStyleM2HitboxDelay(style)
+                        end)
+                    end
+                    hitboxDelay = hitboxDelay or 0.38
+                    local trackSpeed = math.max(math.abs(track.Speed), 0.05)
+                    local effectiveHitbox = (hitboxDelay / trackSpeed)
+                    local pingLead = (isNpc and 0) or (State.pingComp and (getLivePing() * 0.5) or 0)
+                    local dodgeDelay = math.max(0, effectiveHitbox - 0.22 - pingLead)
+
+                    triggerDodge("boxing", enemyRoot, dodgeDelay)
+                    return
+                end
+            end
+
+            if canDashStyle then
+                local hitboxDelay = attackData and attackData.fallbackDelay
+                if not hitboxDelay or typeof(hitboxDelay) ~= "number" then
+                    pcall(function()
+                        hitboxDelay = CombatConfig.GetStyleM2HitboxDelay(style)
+                    end)
+                end
+                hitboxDelay = hitboxDelay or 0.38
+                local trackSpeed = math.max(math.abs(track.Speed), 0.05)
+                local effectiveHitbox = (hitboxDelay / trackSpeed)
+                local pingLead = (isNpc and 0) or (State.pingComp and (getLivePing() * 0.5) or 0)
+                local dodgeDelay = math.max(0, effectiveHitbox - 0.22 - pingLead)
+
+                triggerDodge(styleKey, enemyRoot, dodgeDelay)
                 return
             end
-        end
-
-        if canDashStyle then
-            triggerDodge(styleKey, enemyRoot, dodgeDelay)
-            return
         end
     end
 
@@ -978,28 +1002,44 @@ end
 trackConn(Players.PlayerAdded:Connect(wirePlayer))
 
 local function scanNpc(instance)
+    if not instance or not instance.Parent then return end
     local model
-    if instance:IsA("Humanoid") and instance.Parent and instance.Parent:IsA("Model") then
+    if instance:IsA("Humanoid") and instance.Parent:IsA("Model") then
         model = instance.Parent
     elseif instance:IsA("Model") and instance:FindFirstChildOfClass("Humanoid") then
         model = instance
     end
-    if model and not Players:GetPlayerFromCharacter(model) and model ~= LocalPlayer.Character then
-        task.spawn(wireCharacter, nil, model)
+    if model and model ~= LocalPlayer.Character and not Players:GetPlayerFromCharacter(model) then
+        wireCharacter(nil, model)
     end
 end
 
-for _, d in ipairs(workspace:GetDescendants()) do
-    scanNpc(d)
+local function scanWorkspaceNpcs()
+    for _, child in ipairs(workspace:GetChildren()) do
+        if child:IsA("Model") then
+            scanNpc(child)
+        elseif child:IsA("Folder") then
+            for _, subChild in ipairs(child:GetChildren()) do
+                if subChild:IsA("Model") then
+                    scanNpc(subChild)
+                end
+            end
+        end
+    end
 end
-trackConn(workspace.DescendantAdded:Connect(scanNpc))
+
+scanWorkspaceNpcs()
+
+trackConn(workspace.DescendantAdded:Connect(function(child)
+    if child:IsA("Humanoid") then
+        scanNpc(child)
+    end
+end))
 
 task.spawn(function()
     while not State.unloading do
-        for _, d in ipairs(workspace:GetDescendants()) do
-            scanNpc(d)
-        end
-        task.wait(2.5)
+        scanWorkspaceNpcs()
+        task.wait(5)
     end
 end)
 
@@ -1015,8 +1055,12 @@ task.spawn(function()
     end
 end)
 
+local lastPlayerInfoUpdate = 0
 trackConn(RunService.Heartbeat:Connect(function()
     if State.unloading or not State.showPlayerInfo then return end
+    local now = os.clock()
+    if now - lastPlayerInfoUpdate < 0.08 then return end
+    lastPlayerInfoUpdate = now
     pcall(updatePlayerInfo)
 end))
 
@@ -1334,6 +1378,12 @@ local BoxingHoldToggle = DefenseGroup:AddToggle("BoxingHold", {
     Default = false,
     Callback = function(v)
         State.boxingHold = v
+        if not v then
+            local c = LocalPlayer.Character
+            if c and c:GetAttribute("Blocking") == true then
+                pcall(Block.Unblock)
+            end
+        end
         notifyToggle("Boxing Hold", v)
     end
 })
